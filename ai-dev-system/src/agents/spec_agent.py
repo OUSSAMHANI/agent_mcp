@@ -1,5 +1,5 @@
 from src.state import GraphState
-from src.config.llm import get_llm
+from src.mcp.token_counter import get_tracked_llm
 from langchain_core.messages import SystemMessage, HumanMessage
 
 def spec_agent_node(state: GraphState) -> dict:
@@ -7,7 +7,7 @@ def spec_agent_node(state: GraphState) -> dict:
     Reads the development ticket text and generates a comprehensive technical specification.
     Also handles iterative feedback from the Validator Agent.
     """
-    llm = get_llm()
+    llm = get_tracked_llm("Spec Agent")
     ticket_text = state.get("ticket_text", "")
     feedback = state.get("spec_feedback", "")
     iteration_count = state.get("spec_iteration_count", 0)

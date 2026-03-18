@@ -7,7 +7,7 @@ import os
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from src.state import GraphState
-from src.config.llm import get_llm
+from src.mcp.token_counter import get_tracked_llm
 from src.mcp.client import get_mcp_tools
 
 
@@ -17,7 +17,7 @@ def validator_agent_node(state: GraphState) -> dict:
 
 
 async def _run_async(state: GraphState) -> dict:
-    llm = get_llm()
+    llm = get_tracked_llm("Validator Agent")
     spec = state.get("spec", "")
     iteration_count = state.get("spec_iteration_count", 1)
 
@@ -103,7 +103,7 @@ async def _run_async(state: GraphState) -> dict:
         if isinstance(raw, list):
             raw = "".join(b.get("text", "") if isinstance(b, dict) else str(b) for b in raw)
         content = str(raw).strip()
-        
+
 
     if content.upper().startswith("VALID"):
         return {"spec_feedback": "VALID"}

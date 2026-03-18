@@ -7,7 +7,7 @@ import os
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from src.state import GraphState
-from src.config.llm import get_llm
+from src.mcp.token_counter import get_tracked_llm
 from src.mcp.client import get_mcp_tools
 
 
@@ -17,7 +17,7 @@ def testing_agent_node(state: GraphState) -> dict:
 
 
 async def _run_async(state: GraphState) -> dict:
-    llm = get_llm()
+    llm = get_tracked_llm("Testing Agent")
     ticket_text = state.get("ticket_text", "")
 
     workspace_dir = os.path.abspath(
@@ -80,7 +80,7 @@ async def _run_async(state: GraphState) -> dict:
     eval_response = llm.invoke(eval_messages).content
 
     eval_str = str(eval_response).strip().upper()
-    
+
     tests_passed = "PASS" in eval_str and "FAIL" not in eval_str
 
     if tests_passed:

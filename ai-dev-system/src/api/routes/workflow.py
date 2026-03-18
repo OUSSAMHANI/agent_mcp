@@ -8,13 +8,10 @@ from fastapi.responses import StreamingResponse
 
 from src.api.schemas.workflow import RunResponse, TicketRequest
 from src.graph import build_graph, build_graph_manual
+from src.mcp.token_counter import reset_token_log, get_token_report
 
 router = APIRouter(prefix="/run", tags=["Workflow"])
 
-
-# --------------------------------------------------------------------------- #
-# Helpers                                                                      #
-# --------------------------------------------------------------------------- #
 
 def _base_state(ticket_text: str = "") -> dict:
     os.makedirs("workspace", exist_ok=True)
@@ -41,6 +38,7 @@ def _extract_final(outputs: list[dict]) -> RunResponse:
         for v in o.values():
             final.update(v)
     print("[pipeline] Run finished.")
+    print(get_token_report())
     return RunResponse(
         spec=final.get("spec", ""),
         spec_feedback=final.get("spec_feedback", ""),
@@ -57,22 +55,15 @@ async def _sse_stream(graph, initial_state: dict) -> AsyncGenerator[str, None]:
         print(f"[pipeline] Node stream: {node_name}")
         yield f"data: [node:{node_name}] {output[node_name]}\n\n"
         await asyncio.sleep(0)
+    print(get_token_report())
     print("[pipeline] Streaming run finished.")
 
 
-# --------------------------------------------------------------------------- #
-# Routes                                                                       #
-# --------------------------------------------------------------------------- #
-
 @router.post("", response_model=RunResponse)
 async def run_manual(request: TicketRequest) -> RunResponse:
-    """
-    Run the pipeline with a manually supplied ticket text.
-    Skips the Issue Scout — no GitHub issue is fetched or assigned.
-    """
     if not request.ticket_text.strip():
         raise HTTPException(status_code=422, detail="ticket_text must not be empty.")
-
+    reset_token_log()
     graph = build_graph_manual(request.ticket_text)
     outputs = list(graph.stream(_base_state(request.ticket_text)))
     return _extract_final(outputs)
@@ -80,10 +71,7 @@ async def run_manual(request: TicketRequest) -> RunResponse:
 
 @router.post("/auto", response_model=RunResponse)
 async def run_auto() -> RunResponse:
-    """
-    Fully autonomous run — the Issue Scout picks an open GitHub issue,
-    self-assigns it, clones the repo, and the pipeline fixes and pushes it.
-    """
+    reset_token_log()
     graph = build_graph()
     outputs = list(graph.stream(_base_state()))
     return _extract_final(outputs)
@@ -91,13 +79,9 @@ async def run_auto() -> RunResponse:
 
 @router.post("/stream")
 async def stream_manual(request: TicketRequest) -> StreamingResponse:
-    """
-    Stream a manual-ticket run as Server-Sent Events.
-    One SSE event is emitted per completing agent node.
-    """
     if not request.ticket_text.strip():
         raise HTTPException(status_code=422, detail="ticket_text must not be empty.")
-
+    reset_token_log()
     graph = build_graph_manual(request.ticket_text)
     return StreamingResponse(
         _sse_stream(graph, _base_state(request.ticket_text)),
@@ -107,7 +91,7 @@ async def stream_manual(request: TicketRequest) -> StreamingResponse:
 
 @router.post("/auto/stream")
 async def stream_auto() -> StreamingResponse:
-    """Stream the fully autonomous GitHub issue-driven run as SSE."""
+    reset_token_log()
     graph = build_graph()
     return StreamingResponse(
         _sse_stream(graph, _base_state()),

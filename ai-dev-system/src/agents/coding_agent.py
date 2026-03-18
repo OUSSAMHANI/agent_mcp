@@ -7,7 +7,7 @@ import os
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from src.state import GraphState
-from src.config.llm import get_llm
+from src.mcp.token_counter import get_tracked_llm
 from src.mcp.client import get_mcp_tools
 
 
@@ -17,7 +17,7 @@ def coding_agent_node(state: GraphState) -> dict:
 
 
 async def _run_async(state: GraphState) -> dict:
-    llm = get_llm()
+    llm = get_tracked_llm("Coding Agent")
     spec = state.get("spec", "")
     test_output = state.get("test_output", "")
     iteration_count = state.get("iteration_count", 0)

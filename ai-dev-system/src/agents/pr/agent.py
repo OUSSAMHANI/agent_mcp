@@ -2,7 +2,7 @@
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from src.agents.base import BaseAgentNode
-from src.config.llm import get_llm
+from src.mcp.token_counter import get_tracked_llm
 from src.state import GraphState
 from src.mcp.client import get_mcp_tools
 
@@ -15,7 +15,7 @@ class PRAgent(BaseAgentNode):
         return asyncio.run(self._run_async(state))
 
     async def _run_async(self, state: GraphState) -> dict:
-        llm = get_llm()
+        llm = get_tracked_llm("PR Agent")
         ticket_text = state.get("ticket_text", "")
         issue_number = state.get("issue_number", 0)
         branch_name = state.get("branch_name", "fix/automated")
