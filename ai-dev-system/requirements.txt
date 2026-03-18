@@ -13,3 +13,5 @@ networkx
 fastapi
 uvicorn[standard]
 ddgs
+fastmcp
+langchain-mcp-adapters

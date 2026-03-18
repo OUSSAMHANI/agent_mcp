@@ -45,46 +45,45 @@ def build_graph():
     workflow = StateGraph(GraphState)
 
     # ── Nodes ────────────────────────────────────────────────────────────────
-    workflow.add_node("Issue Scout",    issue_scout_node)
-    workflow.add_node("Spec Agent",     spec_agent_node)
+    workflow.add_node("Issue Scout",     issue_scout_node)
+    workflow.add_node("Spec Agent",      spec_agent_node)
     workflow.add_node("Validator Agent", validator_agent_node)
-    workflow.add_node("Coding Agent",   coding_agent_node)
-    workflow.add_node("Testing Agent",  testing_agent_node)
-    workflow.add_node("PR Agent",       pr_agent_node)
+    workflow.add_node("Coding Agent",    coding_agent_node)
+    workflow.add_node("Testing Agent",   testing_agent_node)
+    workflow.add_node("PR Agent",        pr_agent_node)
 
     # ── Entry point ───────────────────────────────────────────────────────────
     workflow.set_entry_point("Issue Scout")
 
     # ── Edges ─────────────────────────────────────────────────────────────────
     workflow.add_conditional_edges("Issue Scout", _route_issue_scout)
-    workflow.add_edge("Spec Agent",     "Validator Agent")
+    workflow.add_edge("Spec Agent",      "Validator Agent")
     workflow.add_conditional_edges("Validator Agent", _route_validator)
-    workflow.add_edge("Coding Agent",   "Testing Agent")
+    workflow.add_edge("Coding Agent",    "Testing Agent")
     workflow.add_conditional_edges("Testing Agent",  _route_testing)
-    workflow.add_edge("PR Agent",       END)
+    workflow.add_edge("PR Agent",        END)
 
     return workflow.compile()
 
 
 def build_graph_manual(ticket_text: str):
     """
-    Build the same graph but skip the Issue Scout and inject ticket_text
-    directly — used by the manual ``POST /run`` endpoint.
+    Build the same graph but skip Issue Scout and inject ticket_text
+    directly — used by the manual POST /run endpoint.
     """
-    from src.agents.spec_agent import spec_agent_node
-
     workflow = StateGraph(GraphState)
-    workflow.add_node("Spec Agent",     spec_agent_node)
+
+    workflow.add_node("Spec Agent",      spec_agent_node)
     workflow.add_node("Validator Agent", validator_agent_node)
-    workflow.add_node("Coding Agent",   coding_agent_node)
-    workflow.add_node("Testing Agent",  testing_agent_node)
-    workflow.add_node("PR Agent",       pr_agent_node)
+    workflow.add_node("Coding Agent",    coding_agent_node)
+    workflow.add_node("Testing Agent",   testing_agent_node)
+    workflow.add_node("PR Agent",        pr_agent_node)
 
     workflow.set_entry_point("Spec Agent")
-    workflow.add_edge("Spec Agent",     "Validator Agent")
+    workflow.add_edge("Spec Agent",      "Validator Agent")
     workflow.add_conditional_edges("Validator Agent", _route_validator)
-    workflow.add_edge("Coding Agent",   "Testing Agent")
+    workflow.add_edge("Coding Agent",    "Testing Agent")
     workflow.add_conditional_edges("Testing Agent",  _route_testing)
-    workflow.add_edge("PR Agent",       END)
+    workflow.add_edge("PR Agent",        END)
 
     return workflow.compile()

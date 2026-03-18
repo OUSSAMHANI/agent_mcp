@@ -1,100 +1,110 @@
+"""Validator Agent — SRP: validate the technical specification against the codebase.
+
+Uses MCP dev tools (AST + GraphRAG) to inspect the workspace and
+flag naming collisions or missing implementation details.
+"""
+import os
+from langchain_core.messages import SystemMessage, HumanMessage
+
 from src.state import GraphState
 from src.config.llm import get_llm
-from src.tools.ast_analysis import get_ast_tools
-from src.tools.graph_rag import get_graph_rag_tools
-from langchain_core.messages import SystemMessage, HumanMessage
-import os
+from src.mcp.client import get_mcp_tools
 
 
 def validator_agent_node(state: GraphState) -> dict:
-    """
-    Validates the generated technical specification against completeness criteria
-    and the existing codebase structure (via AST + GraphRAG).
-    Flags naming collisions with existing symbols and missing implementation details.
-    """
+    import asyncio
+    return asyncio.run(_run_async(state))
+
+
+async def _run_async(state: GraphState) -> dict:
     llm = get_llm()
     spec = state.get("spec", "")
     iteration_count = state.get("spec_iteration_count", 1)
 
-    # Prevent infinite loops: if we have tried 3 times, force approval
+    # Prevent infinite loops
     if iteration_count >= 3:
-        print(f"[ Validator Agent ] Reached {iteration_count} iterations. Forcing VALID verdict to proceed.")
+        print(f"[ Validator Agent ] Reached {iteration_count} iterations. Forcing VALID verdict.")
         return {"spec_feedback": "VALID"}
 
-    # Build tools for codebase-awareness
     workspace_dir = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", "..", "workspace")
     )
-    ast_tools = get_ast_tools()
-    graph_rag_tools = get_graph_rag_tools()
-    all_tools = ast_tools + graph_rag_tools
-    llm_with_tools = llm.bind_tools(all_tools)
 
-    # ------------------------------------------------------------------ #
-    # Pass 1: LLM inspects the workspace graph to gather codebase context #
-    # ------------------------------------------------------------------ #
-    inspect_messages = [
-        SystemMessage(content=(
-            "You are an expert technical reviewer with access to code-analysis tools.\n"
-            "Before reviewing a specification, call `summarise_code_graph` on the workspace "
-            "to understand what already exists, then call `query_code_graph` for key terms "
-            "from the spec to check for naming collisions or missing dependencies."
-        )),
-        HumanMessage(content=(
-            f"Workspace path: {workspace_dir}\n"
-            f"Specification to review:\n{spec}\n\n"
-            "Use your tools to inspect the workspace and gather context."
-        ))
-    ]
+    async with get_mcp_tools() as tools:
+        # Validator only needs AST + GraphRAG tools — subset of dev tools
+        dev_tools = tools["dev"]
+        analysis_tools = [
+            t for t in dev_tools
+            if t.name in {
+                "summarise_code_graph",
+                "query_code_graph",
+                "analyze_file_ast",
+                "list_workspace_symbols",
+            }
+        ]
+        llm_with_tools = llm.bind_tools(analysis_tools)
 
-    inspection_response = llm_with_tools.invoke(inspect_messages)
+        # ── Pass 1: inspect workspace ────────────────────────────────────────
+        inspect_messages = [
+            SystemMessage(content=(
+                "You are an expert technical reviewer with access to code-analysis tools.\n"
+                "Before reviewing a specification, call `summarise_code_graph` on the workspace "
+                "to understand what already exists, then call `query_code_graph` for key terms "
+                "from the spec to check for naming collisions or missing dependencies."
+            )),
+            HumanMessage(content=(
+                f"Workspace path: {workspace_dir}\n"
+                f"Specification to review:\n{spec}\n\n"
+                "Use your tools to inspect the workspace and gather context."
+            ))
+        ]
 
-    # Execute any tool calls the LLM requests during inspection
-    tool_results: list[str] = []
-    if hasattr(inspection_response, "tool_calls") and inspection_response.tool_calls:
-        for tool_call in inspection_response.tool_calls:
-            tool_name = tool_call["name"]
-            tool_args = tool_call["args"]
-            for t in all_tools:
-                if t.name == tool_name:
-                    result = t.invoke(tool_args)
+        print("[ Validator Agent ] Inspecting workspace via AST + GraphRAG tools...")
+        inspection_response = llm_with_tools.invoke(inspect_messages)
+
+        # Execute inspection tool calls
+        tool_results: list[str] = []
+        if hasattr(inspection_response, "tool_calls") and inspection_response.tool_calls:
+            for tool_call in inspection_response.tool_calls:
+                tool_name = tool_call["name"]
+                tool_args = tool_call["args"]
+                matched = next((t for t in analysis_tools if t.name == tool_name), None)
+                if matched:
+                    result = await matched.ainvoke(tool_args)
                     tool_results.append(f"[{tool_name} result]:\n{result}")
-    else:
-        tool_results = ["No workspace tools were called — proceeding with spec-only review."]
+        else:
+            tool_results = ["No workspace tools were called — proceeding with spec-only review."]
 
-    # --------------------------------------------------------- #
-    # Pass 2: Final VALID / feedback verdict                     #
-    # --------------------------------------------------------- #
-    verdict_prompt = (
-        "Review the technical specification below against the following criteria:\n"
-        "1. Does it clearly identify which files need to be modified or created?\n"
-        "2. Does it provide a high-level description of the logic or changes required?\n"
-        "3. Does it avoid clear naming collisions based on the workspace analysis?\n\n"
-        "If the specification meets all 3 criteria, you MUST respond with EXACTLY 'VALID'.\n"
-        "Do not be overly pedantic. If a developer has enough direction to write the code, approve it.\n"
-        "If it fundamentally fails a criterion, provide specific actionable feedback — do NOT say VALID.\n\n"
-        f"Specification to review:\n{spec}\n\n"
-        f"Workspace analysis results:\n" + "\n".join(tool_results)
-    )
+        # ── Pass 2: final verdict ────────────────────────────────────────────
+        verdict_prompt = (
+            "Review the technical specification below against the following criteria:\n"
+            "1. Does it clearly identify which files need to be modified or created?\n"
+            "2. Does it provide a high-level description of the logic or changes required?\n"
+            "3. Does it avoid clear naming collisions based on the workspace analysis?\n\n"
+            "If the specification meets all 3 criteria, respond with EXACTLY 'VALID'.\n"
+            "Do not be overly pedantic. If a developer has enough direction to write the code, approve it.\n"
+            "If it fundamentally fails a criterion, provide specific actionable feedback.\n\n"
+            f"Specification to review:\n{spec}\n\n"
+            f"Workspace analysis results:\n" + "\n".join(tool_results)
+        )
 
-    messages = [
-        SystemMessage(content=(
-            "You are a pragmatic technical reviewer. "
-            "Your final answer must be either EXACTLY VALID, or specific actionable feedback. "
-            "Err on the side of approval if the core architectural direction is clear."
-        )),
-        HumanMessage(content=verdict_prompt)
-    ]
+        messages = [
+            SystemMessage(content=(
+                "You are a pragmatic technical reviewer. "
+                "Your final answer must be either EXACTLY 'VALID', or specific actionable feedback. "
+                "Err on the side of approval if the core architectural direction is clear."
+            )),
+            HumanMessage(content=verdict_prompt)
+        ]
 
-    print("[ Validator Agent ] Evaluating spec against codebase context for final verdict...")
-    response = llm.invoke(messages)
-    raw = response.content
-    if isinstance(raw, list):
-        raw = "".join(b.get("text", "") if isinstance(b, dict) else str(b) for b in raw)
-    content = str(raw).strip()
+        print("[ Validator Agent ] Evaluating spec for final verdict...")
+        response = llm.invoke(messages)
+        raw = response.content
+        if isinstance(raw, list):
+            raw = "".join(b.get("text", "") if isinstance(b, dict) else str(b) for b in raw)
+        content = str(raw).strip()
+        
 
-    # Handle the 'VALID' keyword precisely
     if content.upper().startswith("VALID"):
         return {"spec_feedback": "VALID"}
-    else:
-        return {"spec_feedback": content}
+    return {"spec_feedback": content}
